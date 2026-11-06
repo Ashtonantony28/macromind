@@ -1,0 +1,20 @@
+[project]
+name = "macromind"
+version = "0.0.1"
+description = "Learned macro placement and PPA prediction for OpenROAD"
+requires-python = ">=3.11"
+dependencies = ["numpy", "scipy", "networkx", "torch"]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov", "ruff"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["macromind*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: long-running", "eda: needs OpenROAD/Yosys installed"]
