@@ -242,3 +242,12 @@ def test_eda_hook_tinyrocket_floorplan():
         x, y, _ = tcl[m["name"]]
         assert abs(m["x"] - x) < 0.2 and abs(m["y"] - y) < 0.2
     assert rec["placer"]["proxy"]["legal"]
+
+
+def test_report_dedupes_superseded_runs():
+    old = {"job": {"design": "d", "placer": "p", "seed": 0, "stop_after": "grt"}, "status": "ok", "finished": "2026-01-01",
+           "ppa": {"grt_wl_um": 1.0}}
+    new = {**old, "finished": "2026-02-01", "ppa": {"grt_wl_um": 2.0}}
+    other = {**old, "job": {**old["job"], "seed": 1}}
+    out = report.dedupe([old, new, other])
+    assert len(out) == 2 and new in out

@@ -89,6 +89,19 @@ def load_records(root: str | Path) -> list[dict]:
     return recs
 
 
+def dedupe(recs: list[dict]) -> list[dict]:
+    """One record per (design, placer, seed, stop, budget, extra): runs keyed by older code versions are
+    superseded by the most recently finished one."""
+    best: dict[str, dict] = {}
+    for r in recs:
+        j = r.get("job", {})
+        ident = json.dumps([j.get("design"), j.get("placer"), j.get("seed"), j.get("stop_after"), j.get("budget"),
+                            j.get("extra")], sort_keys=True, default=str)
+        if ident not in best or str(r.get("finished", "")) >= str(best[ident].get("finished", "")):
+            best[ident] = r
+    return list(best.values())
+
+
 def spearman(xs: list[float], ys: list[float]) -> float | None:
     if len(xs) < 3:
         return None
@@ -102,6 +115,7 @@ def spearman(xs: list[float], ys: list[float]) -> float | None:
 
 
 def build_report(recs: list[dict], *, title: str = "MacroMind harness results") -> str:
+    recs = dedupe(recs)
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in recs:
         j = r.get("job", {})
