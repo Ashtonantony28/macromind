@@ -24,6 +24,13 @@ legal), run the cluster placement pass, compute the proxy cost.
 ``reward = (ref - proxy) / ref`` where ``ref`` is the proxy of
 :func:`~macromind.baselines.grid_place` under the same protocol, so 0 means
 "as good as shelf packing" and rewards are comparable across designs.
+
+Optional learned-predictor term (``EnvConfig.predictor``, see
+:class:`macromind.predict.runtime.Predictor`): the terminal cost becomes
+``proxy + pred_weight * mu + unc_weight * sigma`` where ``mu`` / ``sigma`` are the
+ensemble mean / std of the predicted (standardised) congestion + timing
+penalty, so uncertain placements are penalised rather than exploited. The
+reference uses the same cost for grid packing.
 """
 
 from __future__ import annotations
@@ -49,6 +56,22 @@ class EnvConfig:
     cluster_pass: bool = True
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     reward_clip: float = 2.0
+    #: optional learned predictor with ``penalty(design, placement, scored) -> (mu, sigma)``
+    predictor: object | None = None
+    pred_weight: float = 0.0  #: lambda on the predicted congestion/timing penalty
+    unc_weight: float = 0.0  #: kappa on the ensemble std (uncertainty penalty)
+
+
+def terminal_cost(design: Design, placement: Placement, cfg: "EnvConfig", info: dict | None = None) -> tuple[ProxyResult, float]:
+    """``(proxy result, cost)``: the proxy plus the optional predictor terms of ``cfg``."""
+    res, scored = evaluate_placement(design, placement, proxy=cfg.proxy, cluster_pass=cfg.cluster_pass)
+    cost = res.proxy
+    if cfg.predictor is not None and (cfg.pred_weight or cfg.unc_weight):
+        mu, sigma = cfg.predictor.penalty(design, placement, scored)
+        cost = cost + cfg.pred_weight * mu + cfg.unc_weight * sigma
+        if info is not None:
+            info["pred_penalty"], info["pred_std"] = float(mu), float(sigma)
+    return res, float(cost)
 
 
 def evaluate_placement(design: Design, placement: Placement, *, proxy: ProxyConfig | None = None, cluster_pass: bool = True) -> tuple[ProxyResult, Design]:
@@ -62,11 +85,11 @@ def evaluate_placement(design: Design, placement: Placement, *, proxy: ProxyConf
 
 
 def reference_proxy(design: Design, cfg: EnvConfig | None = None) -> float:
-    """Proxy of grid packing under the env's protocol (reward normaliser)."""
+    """Cost of grid packing under the env's protocol (reward normaliser; proxy unless a predictor is set)."""
     from ..baselines.placers import grid_place
 
     cfg = cfg or EnvConfig()
-    return evaluate_placement(design, grid_place(design), proxy=cfg.proxy, cluster_pass=cfg.cluster_pass)[0].proxy
+    return terminal_cost(design, grid_place(design), cfg)[1]
 
 
 class PlacementEnv:
@@ -273,9 +296,10 @@ class PlacementEnv:
             self.final_placement = self.placement()
             self.result = None
             return -self.cfg.reward_clip
-        res, _ = evaluate_placement(self.design, p, proxy=self.cfg.proxy, cluster_pass=self.cfg.cluster_pass)
+        res, cost = terminal_cost(self.design, p, self.cfg, info)
         self.final_placement = p
         self.result = res
         info["proxy"] = res
-        r = (self.reference - res.proxy) / self.reference
+        info["cost"] = cost
+        r = (self.reference - cost) / self.reference
         return float(np.clip(r, -self.cfg.reward_clip, self.cfg.reward_clip))
