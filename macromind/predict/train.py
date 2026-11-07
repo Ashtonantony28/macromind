@@ -255,7 +255,7 @@ def ridge_predict(train: list[Sample], test: list[Sample], alpha: float = 1.0) -
     W = np.linalg.solve(Z.T @ Z + alpha * np.eye(Z.shape[1]), Z.T @ (Y - ym))
     out = []
     for s in test:
-        y = ((handcrafted(s) - mu) / sd) @ W + ym
+        y = np.clip(((handcrafted(s) - mu) / sd) @ W + ym, -30, 30)  # LODO extrapolation can explode
         T = s.scalars["clock_period_ns"]
         out.append({"grt_wl_um": float(math.exp(y[0]) * s.scalars["hpwl_um"]), "hot_frac": float(y[1]),
                     "wns_ns": float(y[2] * T), "tns_ns": float(-math.expm1(-y[3]) * T)})

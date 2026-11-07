@@ -27,8 +27,12 @@ from .features import GraphCache, featurize
 
 
 class Predictor:
-    def __init__(self, ensembles: dict, *, G: int = 32, w_congestion: float = 1.0, w_timing: float = 1.0, w_wl: float = 0.0):
+    def __init__(self, ensembles: dict, *, G: int = 32, w_congestion: float = 1.0, w_timing: float = 1.0, w_wl: float = 0.0,
+                 design_key: str | None = None):
         self.ensembles = ensembles  # kind -> (Ensemble, Normalizer)
+        #: dataset name of the design (e.g. "bp_fe_top") to denormalise with that design's training statistics;
+        #: None = global statistics (absolute values are then rough, rankings are unaffected)
+        self.design_key = design_key
         self.G = G
         self.w = {"congestion": w_congestion, "timing": w_timing, "wl": w_wl}
         self._graphs: dict[int, tuple[Design, GraphCache]] = {}
@@ -65,13 +69,13 @@ class Predictor:
         if "congestion" in r:
             m, m_sd, s, s_sd = r["congestion"]
             norm = self.ensembles["congestion"][1]
-            v, sd = norm.inv(s), s_sd * norm.std
+            v, sd = norm.inv(s, self.design_key), s_sd * norm.stats(self.design_key)[1]
             res.update(grt_wl_um=float(math.exp(v[0]) * f.hpwl_um), grt_wl_rel_std=float(sd[0]), hot_frac=float(v[1]),
                        hot_frac_std=float(sd[1]), congestion_map=m, congestion_map_std=m_sd)
         if "timing" in r:
             node, node_sd, s, s_sd = r["timing"]
             norm = self.ensembles["timing"][1]
-            v, sd = norm.inv(s), s_sd * norm.std
+            v, sd = norm.inv(s, self.design_key), s_sd * norm.stats(self.design_key)[1]
             res.update(wns_over_t=float(v[0]), wns_over_t_std=float(sd[0]), tns_log=float(v[1]), node_slack_over_t=node,
                        node_slack_std=node_sd)
         res["infer_s"] = round(time.perf_counter() - t, 4)
