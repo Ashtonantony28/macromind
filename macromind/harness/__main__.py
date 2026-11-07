@@ -48,6 +48,7 @@ def _add_job_args(ap: argparse.ArgumentParser, multi: bool) -> None:
     ap.add_argument("--rl-ckpt", default=None)
     ap.add_argument("--set", action="append", default=[], metavar="VAR=VAL", help="extra ORFS variable (repeatable)")
     ap.add_argument("--force", action="store_true", help="ignore the cache")
+    ap.add_argument("--resume", action="store_true", help="continue a failed/interrupted job in place (make resumes)")
 
 
 def _extra(a) -> dict:
@@ -74,6 +75,8 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("import-base", help="adopt an existing WORK_HOME (synth + 2_1 done) as a design's base")
     b.add_argument("--design", required=True)
     b.add_argument("--work-home", required=True)
+    rr = sub.add_parser("resume-dir", help="continue a failed/interrupted job in its existing run dir")
+    rr.add_argument("run_dir")
     bb = sub.add_parser("base", help="build a design's base (synth + 2_1_floorplan)")
     bb.add_argument("--design", required=True)
     bb.add_argument("--num-cores", type=int, default=2)
@@ -82,6 +85,12 @@ def main(argv: list[str] | None = None) -> int:
     if a.cmd == "import-base":
         print(import_base(Path(a.work_home).resolve(), DesignSpec.parse(a.design)))
         return 0
+    if a.cmd == "resume-dir":
+        from .runner import resume_dir
+
+        rec = resume_dir(a.run_dir)
+        print(_summary(rec))
+        return 0 if rec.get("status") == "ok" else 1
     if a.cmd == "base":
         print(ensure_base(DesignSpec.parse(a.design), num_cores=a.num_cores))
         return 0
@@ -90,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         if a.cmd == "key":
             print(json.dumps({"key": job.key(), "run_dir": str(job.run_dir()), "material": job.key_material()}, indent=1))
             return 0
-        rec = run_job(job, force=a.force)
+        rec = run_job(job, force=a.force, resume=a.resume)
         print(json.dumps(rec, indent=1, default=str) if a.json else _summary(rec))
         return 0 if rec.get("status") == "ok" else 1
 
@@ -105,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
         ensure_base(DesignSpec.parse(d), num_cores=a.num_cores)
     bad = 0
     with ThreadPoolExecutor(max_workers=max(1, a.max_concurrency)) as ex:
-        futs = {ex.submit(run_job, j, force=a.force): j for j in jobs}
+        futs = {ex.submit(run_job, j, force=a.force, resume=a.resume): j for j in jobs}
         for f in as_completed(futs):
             try:
                 rec = f.result()

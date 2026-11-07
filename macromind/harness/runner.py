@@ -52,6 +52,8 @@ class Job:
     extra: dict = field(default_factory=dict)
     timeout_s: float | None = None
     rl_ckpt: str | None = None
+    #: reuse this run dir instead of the key-derived one (``resume-dir``; not part of the key)
+    run_dir_override: str | None = None
 
     def __post_init__(self) -> None:
         self.design = str(DesignSpec.parse(self.design))
@@ -85,6 +87,8 @@ class Job:
         return hashlib.sha256(dumps_canonical(self.key_material()).encode()).hexdigest()[:12]
 
     def run_dir(self) -> Path:
+        if self.run_dir_override:
+            return Path(self.run_dir_override)
         return harness_dir() / "jobs" / self.dspec.tag / f"{self.placer}-s{self.seed}-{self.stop_after}-{self.key()}"
 
 
@@ -150,7 +154,8 @@ def _copy_stages(src: Path, dst: Path, *, all_files: bool = False) -> None:
     for p in src.iterdir():
         keep = all_files or p.name.startswith(BASE_STAGES) or p.name in ("clock_period.txt", "mem.json", "synth_stat.txt",
                                                                          "synth_check.txt")
-        if not keep:
+        # klayout.lyt / klayout_tech.lef hold paths relative to the WORK_HOME depth: let ORFS regenerate them
+        if not keep or p.name.startswith("klayout"):
             continue
         if p.is_dir():
             shutil.copytree(p, dst / p.name, symlinks=True, dirs_exist_ok=True, copy_function=shutil.copy2)
@@ -166,19 +171,32 @@ def _tail(path: Path, n: int = 40) -> str:
         return ""
 
 
-def run_job(job: Job, *, force: bool = False, log=print) -> dict:
-    """Run (or load from cache) one job; returns the PPA record (also written to ``ppa.json``)."""
+def run_job(job: Job, *, force: bool = False, resume: bool = False, log=print) -> dict:
+    """Run (or load from cache) one job; returns the PPA record (also written to ``ppa.json``).
+
+    ``resume=True`` keeps an existing (failed/interrupted) run dir and lets ``make``
+    continue from the last finished stage instead of starting over.
+    """
     rd = job.run_dir()
     out = rd / "ppa.json"
-    if out.exists() and not force:
+    if out.exists() and not force and not resume:
         rec = json.loads(out.read_text())
         rec["cached"] = True
         return rec
-    if rd.exists():
+    if out.exists() and resume and json.loads(out.read_text()).get("status") == "ok" and not force:
+        rec = json.loads(out.read_text())
+        rec["cached"] = True
+        return rec
+    resuming = resume and (rd / "config.mk").exists()
+    if rd.exists() and not resuming:
         shutil.rmtree(rd)
-    rd.mkdir(parents=True)
+    rd.mkdir(parents=True, exist_ok=True)
+    prev_wall = 0.0
+    if resuming and out.exists():
+        prev_wall = float(json.loads(out.read_text()).get("make_wall_s") or 0.0)
+    out.unlink(missing_ok=True)
     t_start = time.time()
-    rec: dict = {"schema": SCHEMA, "job": asdict(job), "key": job.key(), "key_material": job.key_material(),
+    rec: dict = {"schema": SCHEMA, "job": {k: v for k, v in asdict(job).items() if k != "run_dir_override"}, "key": job.key(), "key_material": job.key_material(),
                  "run_dir": str(rd), "status": "running", "started": time.strftime("%Y-%m-%dT%H:%M:%S")}
     try:
         base = ensure_base(job.dspec, num_cores=job.num_cores, log=log)
@@ -187,8 +205,10 @@ def run_job(job: Job, *, force: bool = False, log=print) -> dict:
                                       rl_ckpt=job.rl_ckpt, extra=job.extra))
         bcfg = base / "config.mk"
         bd, jd = _orfs_dirs(bcfg, base), _orfs_dirs(cfg, rd)
-        for k in bd:
-            _copy_stages(bd[k], jd[k], all_files=(k == "OBJECTS_DIR"))
+        if not resuming:
+            for k in bd:
+                _copy_stages(bd[k], jd[k], all_files=(k == "OBJECTS_DIR"))
+        rec["resumed"] = resuming
         lefs = print_vars(cfg, rd, ["TECH_LEF", "SC_LEF", "ADDITIONAL_LEFS", "MACRO_PLACE_HALO"])
         target = STOP_TARGETS[job.stop_after]
         log(f"[harness] {job.design} {job.placer} seed={job.seed} -> {target} in {rd}")
@@ -200,7 +220,9 @@ def run_job(job: Job, *, force: bool = False, log=print) -> dict:
                                     stderr=subprocess.STDOUT, env=tool_env(), timeout=job.timeout_s).returncode
             except subprocess.TimeoutExpired:
                 rc, timed_out = -9, True
-        rec["make_wall_s"] = round(time.time() - t0, 1)
+        rec["make_wall_s"] = round(time.time() - t0 + prev_wall, 1)
+        if resuming:
+            rec["make_wall_s_previous_attempts"] = prev_wall
         rec["make_rc"] = rc
         rec["timed_out"] = timed_out
         rec.update(metrics.collect(jd["LOG_DIR"]))
@@ -225,6 +247,21 @@ def run_job(job: Job, *, force: bool = False, log=print) -> dict:
     out.write_text(json.dumps(rec, indent=1, default=str))
     rec["cached"] = False
     return rec
+
+
+def resume_dir(run_dir: str | Path, *, log=print) -> dict:
+    """Continue the job stored in ``run_dir`` (e.g. one keyed by an older code version) in place."""
+    run_dir = Path(run_dir).resolve()
+    rec = json.loads((run_dir / "ppa.json").read_text())
+    jd = {k: v for k, v in rec["job"].items() if k in Job.__dataclass_fields__}
+    jd["run_dir_override"] = str(run_dir)
+    job = Job(**jd)
+    old_key, old_mat = rec.get("key"), rec.get("key_material")
+    out = run_job(job, resume=True, log=log)
+    if old_key:  # keep the identity the run was created under
+        out["key"], out["key_material"] = old_key, old_mat
+        (run_dir / "ppa.json").write_text(json.dumps({k: v for k, v in out.items() if k != "cached"}, indent=1, default=str))
+    return out
 
 
 def _score_odb(odb: Path, rd: Path, lefs: dict) -> dict:

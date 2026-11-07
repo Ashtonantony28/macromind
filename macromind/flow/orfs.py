@@ -140,6 +140,12 @@ def tool_env() -> dict[str, str]:
             k, v = item.split(b"=", 1)
             env[k.decode()] = v.decode()
     env.pop("PYTHONHOME", None)
+    # ORFS's helper scripts run `python3` and need PyYAML from the system
+    # interpreter: keep the MacroMind venv off PATH for make/openroad.
+    venv = env.pop("VIRTUAL_ENV", None) or os.environ.get("VIRTUAL_ENV")
+    exe_dir = str(Path(sys.executable).parent)
+    env["PATH"] = os.pathsep.join(p for p in env.get("PATH", "").split(os.pathsep)
+                                  if p and p != exe_dir and not (venv and p.startswith(venv)))
     return env
 
 
@@ -152,8 +158,14 @@ def make_cmd(config: str | Path, work_home: str | Path, target: str | list[str],
 
 def print_vars(config: str | Path, work_home: str | Path, names: list[str]) -> dict[str, str]:
     """Values of ORFS make variables (``make print-<VAR>``)."""
+    import fcntl
+
     cmd = make_cmd(config, work_home, [f"print-{n}" for n in names]) + ["-s"]
-    out = subprocess.run(cmd, capture_output=True, text=True, env=tool_env(), timeout=120)
+    # ORFS's print-% rule goes through one fixed temp file (/tmp/print_tmp$), so
+    # concurrent prints race: serialise them across threads and processes.
+    with open("/tmp/macromind_orfs_print.lock", "w") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)
+        out = subprocess.run(cmd, capture_output=True, text=True, env=tool_env(), timeout=120)
     vals = {}
     for line in out.stdout.splitlines():
         if " = " in line:
@@ -180,9 +192,10 @@ def file_digest(paths: list[Path]) -> str:
 
 @lru_cache(maxsize=1)
 def code_version() -> str:
-    """Content hash of the MacroMind code that can change a placement (all .py + the hook)."""
+    """Content hash of the MacroMind code that can change a placement (.py outside harness/report/predict + the hook)."""
     pkg = REPO_ROOT / "macromind"
-    files = [p for p in pkg.rglob("*.py") if "__pycache__" not in p.parts] + [HOOK_TCL]
+    skip = {"__pycache__", "harness", "report", "predict"}
+    files = [p for p in pkg.rglob("*.py") if not skip.intersection(p.relative_to(pkg).parts)] + [HOOK_TCL]
     return file_digest(files)[:16]
 
 

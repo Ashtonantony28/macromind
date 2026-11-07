@@ -119,4 +119,7 @@ def collect(log_dir: str | Path) -> dict:
     ppa["grt_overflow"] = ov["total"] if ov else None
     rt = stage_runtimes(log_dir)
     return {"ppa": ppa, "sources": src, "grt": ov, "stage_runtime": rt,
-            "flow_runtime_s": round(sum(v["s"] for v in rt.values()), 1), "orfs_metrics": merged}
+            "flow_runtime_s": round(sum(v["s"] for v in rt.values()), 1),
+            # stages this job ran itself (synth + 2_1_floorplan come from the shared base)
+            "job_runtime_s": round(sum(v["s"] for k, v in rt.items() if not k.startswith(("1_", "2_1_"))), 1),
+            "orfs_metrics": merged}

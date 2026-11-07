@@ -1,0 +1,27 @@
+OpenROAD HEAD-HASH-NOTFOUND 
+Features included (+) or not (-): +GPU +GUI +Python
+This program is licensed under the BSD-3 license. See the LICENSE file for details.
+Components of this program may be licensed under more restrictive licenses which must be honored.
+[INFO ORD-0030] Using 2 thread(s).
+read_liberty /home/claude/macromind/tools/ORFS/flow/platforms/nangate45/lib/NangateOpenCellLibrary_typical.lib
+read_liberty /home/claude/macromind/tools/ORFS/flow/designs/nangate45/tinyRocket/fakeram45_1024x32.lib
+read_liberty /home/claude/macromind/tools/ORFS/flow/designs/nangate45/tinyRocket/fakeram45_64x32.lib
+rtl_macro_placer -max_num_level 2 -halo_width 22.4 -halo_height 15.12 -min_ar 0.33 -signature_net_threshold 50 -area_weight 0.1 -wirelength_weight 100.0 -outline_weight 100.0 -boundary_weight 50.0 -notch_weight 10.0 -target_dead_space 0.05 -report_directory /home/claude/macromind/runs/orfs/smoke/objects/nangate45/tinyRocket/base/rtlmp -fence_lx 0.0 -fence_ly 0.0 -fence_ux 100000000.0 -fence_uy 100000000.0 -target_util 0.3
+Die Area: (0.00, 0.00) (424.92, 499.40),  Floorplan Area: (10.07, 9.80) (414.77, 488.60)
+	Number of std cell instances: 27088
+	Area of std cell instances: 50010.64
+	Number of macros: 2
+	Area of macros: 2481.25
+	Halo width: 22.40
+	Halo height: 15.12
+	Area of macros with halos: 11928.18
+	Area of std cell instances + Area of macros: 52491.89
+	Floorplan area: 193770.36
+	Design Utilization: 0.27
+	Floorplan Utilization: 0.26
+	Manufacturing Grid: 10
+
+Took 30 seconds: rtl_macro_placer -max_num_level 2 -halo_width 22.4 -halo_height 15.12 -min_ar 0.33 -signature_net_threshold 50 -area_weight 0.1 -wirelength_weight 100.0 -outline_weight 100.0 -boundary_weight 50.0 -notch_weight 10.0 -target_dead_space 0.05 -report_directory /home/claude/macromind/runs/orfs/smoke/objects/nangate45/tinyRocket/base/rtlmp -fence_lx 0.0 -fence_ly 0.0 -fence_ux 100000000.0 -fence_uy 100000000.0 -target_util 0.3
+Elapsed time: 0:30.76[h:]min:sec. CPU time: user 34.95 sys 24.52 (193%). Peak memory: 185876KB.
+Log                        Elapsed/s Peak Memory/MB  sha1sum .odb [0:20)
+2_2_floorplan_macro               30            181 877ffc54d8a9a8d44307
