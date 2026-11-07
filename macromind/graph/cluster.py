@@ -103,7 +103,7 @@ def cell_adjacency(design: Design, cell_index: dict[str, int], max_net_degree: i
     return A
 
 
-def _hem_level(A: sp.csr_matrix, area: np.ndarray, max_area: float, need: int, rng: np.random.Generator) -> np.ndarray:
+def _hem_level(A: sp.csr_matrix, area: np.ndarray, max_area: float, need: int, rng: np.random.Generator, gid: np.ndarray | None = None) -> np.ndarray:
     """One level of heavy-edge matching; returns ``match`` (partner index or self)."""
     n = A.shape[0]
     match = np.full(n, -1, dtype=np.int64)
@@ -119,6 +119,8 @@ def _hem_level(A: sp.csr_matrix, area: np.ndarray, max_area: float, need: int, r
             continue
         nb = indices[s:e]
         ok = (match[nb] < 0) & (nb != u) & (area[nb] + area[u] <= max_area)
+        if gid is not None:
+            ok &= gid[nb] == gid[u]
         if not ok.any():
             continue
         nb = nb[ok]
@@ -184,21 +186,26 @@ def cluster_cells(
         same = gid[A.row] == gid[A.col]
         A = sp.coo_matrix((A.data * np.where(same, 1.0 + hier_weight, 1.0), (A.row, A.col)), shape=A.shape).tocsr()
 
-    # ---- multilevel coarsening
+    # ---- multilevel coarsening: phase 0 within hierarchy groups, phase 1 global, then fallback
     to_coarse = np.arange(len(keep))
     levels = 0
     relax = 1.0
+    phase = 0 if (hier_weight and len(keep) and gid.max() > 0) else 1
     max_area = area_balance * area.sum() / target
     while A.shape[0] > target:
         n = A.shape[0]
-        match = _hem_level(A, area, max_area * relax, n - target, rng)
-        if (match != np.arange(n)).sum() // 2 < max(1, 0.02 * (n - target)):
-            if relax < 8:
+        match = _hem_level(A, area, max_area * relax, n - target, rng, gid if phase == 0 else None)
+        merged = int((match != np.arange(n)).sum() // 2)
+        if merged < max(1, 0.02 * (n - target)):
+            if relax < 4:
                 relax *= 2  # stall: let clusters grow
-                if (match == np.arange(n)).all():
-                    continue
+            elif phase == 0:
+                phase, relax = 1, 1.0
             else:
                 match = _fallback_pairs(A, area, gid, n - target)
+                merged = 1
+            if merged == 0:
+                continue
         inv = _contract(match)
         m = int(inv.max()) + 1
         P = sp.csr_matrix((np.ones(n), (np.arange(n), inv)), shape=(n, m))

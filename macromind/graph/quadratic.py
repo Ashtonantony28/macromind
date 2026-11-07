@@ -42,13 +42,13 @@ _CACHE_ATTR = "_quadratic_model"
 
 @dataclass
 class QPConfig:
-    iters: int = 12
+    iters: int = 30
     clique_max: int = 6
     grid: int | None = None  # spreading bins per side (default ~ sqrt(#movable), 4..32)
-    delta: float = 1.5  # FastPlace cell-shifting damping
-    anchor_start: float = 0.02  # pseudo-anchor weight, relative to mean spring diagonal
-    anchor_growth: float = 1.6
-    target_density: float = 1.0  # spread clusters until area/free-area ~ this
+    delta: float = 0.5  # FastPlace cell-shifting damping
+    anchor_start: float = 0.1  # pseudo-anchor weight, relative to mean spring diagonal
+    anchor_growth: float = 1.3
+    target_density: float = 0.6  # spread clusters until area/free-area ~ this
     regularize: float = 1e-6
 
 

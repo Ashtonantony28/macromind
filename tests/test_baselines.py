@@ -19,7 +19,7 @@ def design():
 
 @pytest.mark.parametrize("method", sorted(PLACERS))
 def test_common_interface_and_legality(design, method):
-    p = get_placer(method)(design, seed=1, budget=500)
+    p = get_placer(method)(design, seed=1, budget=4 if method == "rl" else 500)
     assert len(p) == len(design.macros)
     assert check_legality(design, p) == []
     assert p.meta["method"] == method and p.meta["legalized"]
@@ -27,8 +27,9 @@ def test_common_interface_and_legality(design, method):
 
 @pytest.mark.parametrize("method", sorted(PLACERS))
 def test_deterministic_per_seed(design, method):
-    a = place(design, method, seed=3, budget=300)
-    b = place(design, method, seed=3, budget=300)
+    budget = 4 if method == "rl" else 300  # rl: sampled episodes (no checkpoint -> seeded untrained policy)
+    a = place(design, method, seed=3, budget=budget)
+    b = place(design, method, seed=3, budget=budget)
     assert np.array_equal(a.x, b.x) and np.array_equal(a.y, b.y) and np.array_equal(a.orient, b.orient)
 
 

@@ -35,6 +35,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--grid", type=int, default=32, help="cost grid bins along x")
     ap.add_argument("--out", help="write placed DEF (only with --def)")
     ap.add_argument("--json", action="store_true", help="print a JSON record instead of text")
+    ap.add_argument("--cluster-pass", action="store_true", help="re-place std-cell clusters around the macros before scoring")
     a = ap.parse_args(argv)
 
     if a.synthetic is not None:
@@ -54,8 +55,13 @@ def main(argv: list[str] | None = None) -> int:
         placement = sa_place(design, a.seed, a.budget, SAConfig(proxy=cfg))
     else:
         placement = PLACERS[a.method](design, seed=a.seed, budget=a.budget)
+    scored = design
+    if a.cluster_pass:
+        from ..graph.quadratic import place_clusters
+
+        scored = place_clusters(design, placement)
     runtime = time.perf_counter() - t
-    res = proxy_cost(design, placement, cfg)
+    res = proxy_cost(scored, placement, cfg)
     legal = not check_legality(design, placement)
     if a.out:
         if not a.def_path:

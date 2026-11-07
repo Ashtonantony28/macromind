@@ -289,10 +289,21 @@ def sa_place(design: Design, seed: int = 0, budget: int | None = None, config: S
     return out
 
 
+def rl_place(design: Design, seed: int = 0, budget: int | None = None, checkpoint: str | None = None) -> Placement:
+    """RL policy placer (lazy torch import). ``budget`` = sampled episodes (best-of-k); ``None`` = greedy.
+
+    The checkpoint comes from ``checkpoint``, else ``$MACROMIND_RL_CKPT``, else ``runs/rl-v1/policy.pt``.
+    """
+    from ..place.agent import rl_place as _rl
+
+    return _rl(design, seed=seed, budget=budget, checkpoint=checkpoint)
+
+
 PLACERS: dict[str, Callable[..., Placement]] = {
     "random": random_place,
     "grid": grid_place,
     "sa": sa_place,
+    "rl": rl_place,
 }
 
 
@@ -303,6 +314,17 @@ def get_placer(name: str) -> Callable[..., Placement]:
         raise KeyError(f"unknown placer {name!r}; choose from {sorted(PLACERS)}") from None
 
 
-def place(design: Design, method: str = "sa", seed: int = 0, budget: int | None = None) -> Placement:
-    """Run the named baseline placer."""
-    return get_placer(method)(design, seed=seed, budget=budget)
+def place(design: Design, method: str = "sa", seed: int = 0, budget: int | None = None, *, cluster_pass: bool = False) -> Placement:
+    """Run the named placer.
+
+    With ``cluster_pass=True`` the std-cell clusters are then re-placed around
+    the macros by :func:`macromind.graph.place_clusters` (the same pass the RL
+    placer uses), and the resulting design is stored in
+    ``placement.meta["cluster_design"]``; evaluate the proxy on that design.
+    """
+    p = get_placer(method)(design, seed=seed, budget=budget)
+    if cluster_pass:
+        from ..graph.quadratic import place_clusters
+
+        p.meta["cluster_design"] = place_clusters(design, p)
+    return p
