@@ -84,7 +84,7 @@ def main() -> int:
         "core_util": first(*(f"{s}__design__instance__utilization" for s in stages)),
         "wns_ns": first(*(f"{s}__timing__setup__ws" for s in stages)),
         "tns_ns": first(*(f"{s}__timing__setup__tns" for s in stages)),
-        "grt_wirelength_um": first("globalroute__route__wirelength"),
+        "grt_wirelength_um": first("globalroute__global_route__wirelength", "globalroute__route__wirelength"),
         "routed_wirelength_um": first("detailedroute__route__wirelength"),
         "drc_errors": first("detailedroute__route__drc_errors"),
         "power_w": first("finish__power__total"),

@@ -6,6 +6,7 @@
 #   scripts/run_tinygpu.sh sim                   # RTL sim: upstream vs macro variant vs ISA model
 #   scripts/run_tinygpu.sh c8 synth              # Yosys (yosys-slang front end) only
 #   scripts/run_tinygpu.sh c8 grt                # floorplan + RTLMP macro placement + global route
+#   scripts/run_tinygpu.sh c4 route              # + detailed route
 #   scripts/run_tinygpu.sh c4                    # full flow (finish)
 # Configs: ff2 (upstream default, flops), c4, c8, c16 (see designs/tinygpu/configs.mk).
 # Env: WORK_HOME (default runs/orfs/tinygpu), NUM_CORES (default 2), CLEAN=0 to resume.
@@ -36,11 +37,11 @@ case "$cfg" in
   sim)   exec "$MACROMIND_ROOT/.venv/bin/python" "$tg/sim/run_sim.py" "$@" ;;
 esac
 target="${1:-finish}"; [ $# -ge 1 ] && shift
-case "$target" in grt) target=globalroute ;; route) target=detailed_route ;; esac
+case "$target" in grt) target=globalroute ;; esac
 
 export WORK_HOME="${WORK_HOME:-$MACROMIND_ROOT/runs/orfs/tinygpu}"
 mkdir -p "$WORK_HOME"
-log="$WORK_HOME/tinygpu_${cfg}.make.log"
+log="$WORK_HOME/tinygpu_${cfg}_${target}.make.log"
 mk=(make -C "$FLOW_HOME" DESIGN_CONFIG="$tg/config.mk" TG_CONFIG="$cfg" WORK_HOME="$WORK_HOME" NUM_CORES="$NUM_CORES" "$@")
 if [ "${CLEAN:-1}" = 1 ]; then "${mk[@]}" clean_all >/dev/null 2>&1 || true; fi
 echo "== ORFS tinygpu config=$cfg target=$target cores=$NUM_CORES log=$log"

@@ -53,9 +53,9 @@ memory, 4 data channels, 4 threads per core, `ICACHE_LINES=64`, 64-word shared m
 per core, and an L1-D of `TG_DCACHE_BANKS` x 256 lines. They also use upstream's
 multi-warp mode `WARPS_PER_CORE=4` (4 warps of 1 lane, ADR-012/014): the 4 threads of
 a core time-share one ALU. This is an upstream feature, not a change, and it keeps the
-number of 32-bit dividers equal to `NUM_CORES`; with one ALU per thread an 8-core
-build synthesised to well over 1 M generic cells, ran out of memory (11.5 GB) in
-techmap and did not fit the container.
+number of 32-bit dividers equal to `NUM_CORES`. With one ALU per thread (upstream's
+default 1 warp x 4 lanes) the 8-core ORFS synthesis was killed by the OOM killer in
+techmap at 11.5 GB after 5.5 min, so it does not fit this 15 GB container.
 
 | Memory | Upstream | Macro variant | Macro | Count |
 |---|---|---|---|---|
@@ -128,8 +128,81 @@ gpu) and MACROS=1. All final memories match word for word:
 
 ## 3. ORFS results
 
-RESULTS_PLACEHOLDER
+All runs: ORFS `v3.0-3468-gc673f615`, NanGate45, `NUM_CORES=2` (make/OpenROAD threads),
+shared 4-core machine (other agents' ORFS jobs ran concurrently, so runtimes are
+inflated), yosys-slang front end, flat synthesis, ABC speed script.
+Clock: 15 ns for the macro configs (the single-cycle 32-bit divider; a first c4
+floorplan at 5 ns had WNS -10.25 ns), 5 ns for the 8-bit baseline.
+`CORE_UTILIZATION` 35 %, `PLACE_DENSITY` 0.60, `MACRO_PLACE_HALO` 8 um, default
+macro placer (hier-RTLMP, `2_2_floorplan_macro`).
+
+### Synthesis (ORFS `1_synth.v`, `reports/.../synth_stat.txt`)
+
+| Config | Cells (incl. macros) | Area um^2 (incl. macros) | Sequential share | Macros in netlist | Synth time | Yosys peak RSS |
+|---|---|---|---|---|---|---|
+| `ff2` (upstream default, 5 ns) | 61,547 | 88,592 | 16 % | 0 | 8.8 min | 1.9 GB |
+| `c4` | 133,987 | 261,680 | 29 % | 12 (4+4+4) | 5.7 min | 1.4 GB |
+| `c8` | 260,120 | 481,412 | 31 % | 20 (8+8+4) | 12.1 min | 2.7 GB |
+| `c16` | 542,699 | 989,076 | 30 % | 40 (16+16+8) | 26.8 min | 5.3 GB |
+
+The macro counts are what `tests/test_tinygpu.py` asserts (elaborated with yosys-slang
+for every config, and in the ORFS netlists when present).
+
+### Physical design, `c4` (12 macros)
+
+| Metric | Value |
+|---|---|
+| Die / core | 872.7 x 872.7 um (761,553 um^2), core util 38.1 % after GRT (std cells 35.1 %) |
+| Std cells after GRT | 143,542 (249,809 um^2); macros 12 (34,664 um^2) |
+| Setup WNS / TNS after GRT (15 ns) | -0.006 ns / -0.006 ns |
+| GRT wirelength | 3,684,708 um; 0 antenna violations, 0 diodes |
+| Power (GRT estimate) | 5.43 W |
+| Stage runtimes | synth 341 s, floorplan 514 s (timing repair), RTLMP macro placement 444 s, global place 742 s, resize 89 s, detailed place 119 s, CTS 173 s, GRT 845 s; **~56 min** synth to GRT |
+| Detailed route (TritonRoute, 2 threads) | **0 DRC** after 6 iterations (25,049 -> 0), wirelength **2,850,630 um**, 1,018,893 vias, 0 antenna violations; 2,573 s (43 min) |
+| Total, synth to detailed route | ~99 min wall (on a shared machine) |
+
+Post-route STA (`finish`) was not run; the timing numbers are the GRT estimates.
+
+RTLMP placement of c4 (lower-left corner, um): the macros are pushed to the die
+boundary, mostly the left edge and the top edge, with the per-core SMEM/I-cache pairs
+not always kept together (core 1's I-cache ends at the bottom right, far from its
+SMEM on the left) - a placement a learned placer could plausibly improve on.
+
+| Macro | x, y | Macro | x, y |
+|---|---|---|---|
+| core0 I$ 64x21 | 12, 234 | core0 SMEM 64x32 | 12, 388 |
+| core1 I$ 64x21 | 736, 12 | core1 SMEM 64x32 | 12, 311 |
+| core2 I$ 64x21 | 12, 689 | core2 SMEM 64x32 | 48, 388 |
+| core3 I$ 64x21 | 547, 708 | core3 SMEM 64x32 | 547, 631 |
+| L1-D bank0 256x34 | 433, 713 | L1-D bank1 256x34 | 433, 794 |
+| L1-D bank2 256x34 | 224, 12 | L1-D bank3 256x34 | 433, 631 |
+
+`c8` and `c16` were synthesised but not placed: from c4's 56 min to GRT at 134 k
+cells, c8 (260 k) would take roughly 2 h and c16 (543 k) 4-5 h at 2 threads.
+
 
 ## 4. Caveats and what is incomplete
 
-CAVEATS_PLACEHOLDER
+* **Not the user's GPU verbatim.** Results-equivalent on the kernels tested, but cycle
+  timing differs (synchronous SRAMs, arbitration, 4 warps sharing one ALU), the L1-D is
+  banked and write-invalidate, and telemetry outputs are dropped. Upstream's cocotb
+  suite was not run.
+* **Register files stay in flops** (4 x 13 x 32 bits per core, ~30 % of cell area is
+  sequential). Mapping them to 2R1W SRAM would need duplicated macros or a 2-cycle
+  read; not done.
+* **Std-cell heavy.** Macros are 13 % of c4's cell area (9 % of c16's): the 32-bit
+  combinational divider/multiplier per core, the per-thread register files and the
+  data-memory controller (whose arbiter scans all NUM_CORES x 4 consumers) dominate.
+  This makes the benchmark timing- and wirelength-relevant but macro-light by area.
+* **Only c4 was placed and routed** (no `finish`/post-route STA). c8/c16 are synthesised (macro counts verified);
+  floorplan/RTLMP/GRT for them is scripted (`scripts/run_tinygpu.sh c8 grt`) but needs
+  ~2-5 h at 2 threads.
+* **Timing**: the 15 ns clock is set from the observed critical path, not a target; IO
+  delays are a flat 20 % of the period. No IO placement constraints (ORFS random IO).
+* **sim coverage**: three kernels (tiled matmul with LDS/STS/BAR, naive matmul,
+  transpose) at 2, 4 and 8 cores; not MeDiC, COALESCE, PIPELINED or SIMT_STACK. The
+  upstream gpu reference is simulated without I-cache (see the valid-bit note) and with
+  a 16-line L1-D for speed.
+* The upstream clone is gitignored; `scripts/run_tinygpu.sh fetch` re-clones it at the
+  pinned commit and checks the derived RTL is current.
+
