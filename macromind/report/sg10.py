@@ -73,8 +73,8 @@ def welch(a, b):
     va = sum((x - ma) ** 2 for x in a) / (len(a) - 1)
     vb = sum((x - mb) ** 2 for x in b) / (len(b) - 1)
     se = math.sqrt(va / len(a) + vb / len(b))
-    if se == 0:
-        return ma - mb, 0.0, (1.0 if ma == mb else 0.0)
+    if se <= 1e-9 * max(abs(ma), abs(mb), 1e-12):  # no spread on either side (e.g. identical placements): no test possible
+        return ma - mb, 0.0, (1.0 if ma == mb else None)
     df = se ** 4 / ((va / len(a)) ** 2 / (len(a) - 1) + (vb / len(b)) ** 2 / (len(b) - 1))
     t = (ma - mb) / se
     return ma - mb, float(stats.t.ppf(0.975, df)) * se, float(2 * stats.t.sf(abs(t), df))
@@ -134,8 +134,7 @@ def main_table(groups: dict[str, list[dict]], ref_wl: float | None) -> list[str]
         rs = groups[lbl]
         ok = [r for r in rs if r.get("status") == "ok"]
         seeds = sorted({r["job"]["seed"] for r in ok})
-        distinct = len({json.dumps(sorted((m["name"], m["x"], m["y"], m["orient"]) for m in r["placement"]["macros"]))
-                        for r in ok if (r.get("placement") or {}).get("macros")})
+        distinct = n_distinct(ok)
         wl = _vals(ok, "ppa.grt_wl_um")
         rel = fmt_ci([100 * (v / ref_wl - 1) for v in wl]) + " %" if wl and ref_wl else "n/a"
         cells = [fmt_ci(_vals(ok, p)) for _, p in cols]
@@ -165,7 +164,7 @@ def ablation(groups: dict[str, list[dict]]) -> list[str]:
              ("rl-v2-pred", "macromind-sa"), ("rl-v2-proxy", "macromind-sa")]
     mets = [("GRT WL (um)", "ppa.grt_wl_um"), ("hot gcells (%)", "hot_pct"), ("WNS (ns)", "ppa.wns_ns"),
             ("TNS (ns)", "ppa.tns_ns"), ("proxy", "placement.proxy")]
-    out = ["| A vs B | n (A, B) | " + " | ".join(f"Δ {m} (A − B), 95% CI, p" for m, _ in mets) + " |",
+    out = ["| A vs B | runs (distinct placements) A, B | " + " | ".join(f"Δ {m} (A − B), 95% CI, p" for m, _ in mets) + " |",
            "|---" * (2 + len(mets)) + "|"]
     for a, b in pairs:
         if a not in groups or b not in groups:
@@ -175,14 +174,35 @@ def ablation(groups: dict[str, list[dict]]) -> list[str]:
         cells = []
         for _, p in mets:
             w = welch(_vals(A, p), _vals(B, p))
-            cells.append("n/a" if w is None else f"{_fmt(w[0])} ± {_fmt(w[1])}, p={w[2]:.2f}")
-        out.append(f"| {a} vs {b} | {len(A)}, {len(B)} | " + " | ".join(cells) + " |")
+            if w is None:
+                cells.append("n/a")
+            elif w[2] is None:
+                cells.append(f"{_fmt(w[0])} (no spread: untestable)")
+            else:
+                cells.append(f"{_fmt(w[0])} ± {_fmt(w[1])}, p={w[2]:.2f}")
+        out.append(f"| {a} vs {b} | {len(A)} ({n_distinct(A)}), {len(B)} ({n_distinct(B)}) | " + " | ".join(cells) + " |")
     return out
 
 
+def _placement_key(r: dict) -> str:
+    return json.dumps(sorted((m["name"], m["x"], m["y"], m["orient"]) for m in (r.get("placement") or {}).get("macros", [])))
+
+
+def n_distinct(rs: list[dict]) -> int:
+    return len({_placement_key(r) for r in rs if (r.get("placement") or {}).get("macros")})
+
+
 def correlations(recs: list[dict], preds: dict) -> list[str]:
-    ok = [r for r in recs if r.get("status") == "ok" and g(r, "ppa.grt_wl_um") is not None]
-    out = [f"Over {len(ok)} GRT runs (all placers; runs with identical placements count separately).", "",
+    ok, seen = [], set()
+    for r in recs:  # one point per distinct placement (identical placements give identical flow results)
+        if r.get("status") != "ok" or g(r, "ppa.grt_wl_um") is None:
+            continue
+        k = _placement_key(r)
+        if k in seen and (r.get("placement") or {}).get("macros"):
+            continue
+        seen.add(k)
+        ok.append(r)
+    out = [f"Over {len(ok)} distinct GRT placements (all placers; repeated identical placements counted once).", "",
            "| ranker | vs GRT WL: tau / rho | vs hot gcells: tau / rho | vs WNS (cost = −WNS): tau / rho |",
            "|---|---|---|---|"]
     rankers = [("MacroMind proxy", lambda r: g(r, "placement.proxy")),
