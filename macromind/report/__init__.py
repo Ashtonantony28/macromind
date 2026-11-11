@@ -16,7 +16,9 @@ COLUMNS: list[tuple[str, str]] = [
     ("power (mW)", "ppa.power_mw"),
     ("DRC", "ppa.drc_errors"),
     ("GRT overflow", "ppa.grt_overflow"),
+    ("GRT hot gcells (%)", "hot_pct"),
     ("proxy", "placement.proxy"),
+    ("placer time (s)", "placer_s"),
     ("flow time (min)", "flow_min"),
 ]
 
@@ -25,6 +27,15 @@ def _get(rec: dict, path: str):
     if path == "ppa.power_mw":
         v = _get(rec, "ppa.power_w")
         return None if v is None else 1e3 * v
+    if path == "hot_pct":  # share of GRT gcells at >= 90% utilisation (harness label-prune)
+        v = (rec.get("grt_congestion") or {}).get("hot_frac")
+        return None if v is None else 100.0 * v
+    if path == "placer_s":
+        # the macro placer itself: MacroMind = placer subprocess (DEF read + clustering + placement);
+        # RTLMP = the whole 2_2_floorplan_macro stage
+        if (rec.get("job") or {}).get("placer") == "rtlmp":
+            return ((rec.get("stage_runtime") or {}).get("2_2_floorplan_macro") or {}).get("s")
+        return (rec.get("placer") or {}).get("total_s")
     if path == "flow_min":
         v = rec.get("make_wall_s")
         return None if v is None else v / 60.0
@@ -95,11 +106,17 @@ def dedupe(recs: list[dict]) -> list[dict]:
     best: dict[str, dict] = {}
     for r in recs:
         j = r.get("job", {})
-        ident = json.dumps([j.get("design"), j.get("placer"), j.get("seed"), j.get("stop_after"), j.get("budget"),
+        ident = json.dumps([j.get("design"), label(r), j.get("seed"), j.get("stop_after"), j.get("budget"),
                             j.get("extra")], sort_keys=True, default=str)
         if ident not in best or str(r.get("finished", "")) >= str(best[ident].get("finished", "")):
             best[ident] = r
     return list(best.values())
+
+
+def label(rec: dict) -> str:
+    """Report name of a record's placer: the job tag (e.g. ``rl-v2-proxy``) or the placer name."""
+    j = rec.get("job", {}) or {}
+    return j.get("tag") or j.get("placer") or "?"
 
 
 def spearman(xs: list[float], ys: list[float]) -> float | None:
@@ -119,7 +136,7 @@ def build_report(recs: list[dict], *, title: str = "MacroMind harness results") 
     groups: dict[tuple, list[dict]] = defaultdict(list)
     for r in recs:
         j = r.get("job", {})
-        groups[(j.get("design"), j.get("stop_after"), j.get("placer"))].append(r)
+        groups[(j.get("design"), j.get("stop_after"), label(r))].append(r)
     lines = [f"# {title}", "", f"{len(recs)} job records. Cells are mean ± 95% CI (Student t) over seeds with status ok; "
              "a single value means one seed.", ""]
     by_design: dict[tuple, list] = defaultdict(list)

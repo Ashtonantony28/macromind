@@ -27,7 +27,7 @@ def _summary(rec: dict) -> str:
     j, p = rec.get("job", {}), rec.get("ppa", {}) or {}
     pl = rec.get("placement", {}) or {}
     f = lambda v, fmt: (fmt.format(v) if isinstance(v, (int, float)) else "n/a")  # noqa: E731
-    return (f"{j.get('design')} {j.get('placer')} s{j.get('seed')} [{rec.get('status')}{', cached' if rec.get('cached') else ''}] "
+    return (f"{j.get('design')} {j.get('tag') or j.get('placer')} s{j.get('seed')} [{rec.get('status')}{', cached' if rec.get('cached') else ''}] "
             f"WL={f(p.get('routed_wl_um') or p.get('grt_wl_um'), '{:.0f}')} WNS={f(p.get('wns_ns'), '{:.3f}')} "
             f"TNS={f(p.get('tns_ns'), '{:.2f}')} P={f(p.get('power_w'), '{:.4f}')} DRC={p.get('drc_errors')} "
             f"OVF={p.get('grt_overflow')} proxy={f(pl.get('proxy'), '{:.4f}')} wall={rec.get('wall_s')}s -> {rec.get('run_dir')}")
@@ -46,6 +46,7 @@ def _add_job_args(ap: argparse.ArgumentParser, multi: bool) -> None:
     ap.add_argument("--num-cores", type=int, default=2, help="ORFS NUM_CORES per job")
     ap.add_argument("--timeout", type=float, default=None, help="per-job make timeout (s)")
     ap.add_argument("--rl-ckpt", default=None)
+    ap.add_argument("--tag", default=None, help="report name of this placer variant (e.g. rl-v2-proxy)")
     ap.add_argument("--set", action="append", default=[], metavar="VAR=VAL", help="extra ORFS variable (repeatable)")
     ap.add_argument("--force", action="store_true", help="ignore the cache")
     ap.add_argument("--resume", action="store_true", help="continue a failed/interrupted job in place (make resumes)")
@@ -80,8 +81,19 @@ def main(argv: list[str] | None = None) -> int:
     bb = sub.add_parser("base", help="build a design's base (synth + 2_1_floorplan)")
     bb.add_argument("--design", required=True)
     bb.add_argument("--num-cores", type=int, default=2)
+    lp = sub.add_parser("label-prune", help="add GRT gcell congestion labels to finished jobs, then drop their ODBs etc.")
+    lp.add_argument("--root", default=None, help="jobs dir (default runs/harness/jobs)")
+    lp.add_argument("--no-prune", action="store_true")
     a = ap.parse_args(argv)
 
+    if a.cmd == "label-prune":
+        from .runner import harness_dir, label_and_prune
+
+        for rd in sorted(Path(a.root or harness_dir() / "jobs").glob("*/*")):
+            msg = label_and_prune(rd, prune=not a.no_prune)
+            if msg:
+                print(f"{rd.name}: {msg}", flush=True)
+        return 0
     if a.cmd == "import-base":
         print(import_base(Path(a.work_home).resolve(), DesignSpec.parse(a.design)))
         return 0
@@ -95,7 +107,7 @@ def main(argv: list[str] | None = None) -> int:
         print(ensure_base(DesignSpec.parse(a.design), num_cores=a.num_cores))
         return 0
     if a.cmd in ("run", "key"):
-        job = Job(a.design, a.placer, a.seed, a.stop_after, a.budget, a.num_cores, _extra(a), a.timeout, a.rl_ckpt)
+        job = Job(a.design, a.placer, a.seed, a.stop_after, a.budget, a.num_cores, _extra(a), a.timeout, a.rl_ckpt, a.tag)
         if a.cmd == "key":
             print(json.dumps({"key": job.key(), "run_dir": str(job.run_dir()), "material": job.key_material()}, indent=1))
             return 0
@@ -103,7 +115,7 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(rec, indent=1, default=str) if a.json else _summary(rec))
         return 0 if rec.get("status") == "ok" else 1
 
-    jobs = [Job(d, p, sd, a.stop_after, a.budget, a.num_cores, _extra(a), a.timeout, a.rl_ckpt)
+    jobs = [Job(d, p, sd, a.stop_after, a.budget, a.num_cores, _extra(a), a.timeout, a.rl_ckpt, a.tag)
             for d, p, sd in itertools.product(a.design, a.placer, a.seeds)]
     if a.dry_run:
         for j in jobs:

@@ -208,3 +208,20 @@ def test_evaluate_design_table(tmp_path):
     assert methods == ["random@2", "grid", "wiremask", "sa@50", "rl:t", "rl:t@2"]
     assert all(r["legal"] and np.isfinite(r["proxy"]) and np.isfinite(r["proxy_nocp"]) for r in recs)
     assert "rl:t@2" in markdown_table(recs) and "proxy / grid" in summary_table(recs)
+
+
+def test_run_policy_sample_only_and_reward_selection(design):
+    from macromind.place.agent import run_policy
+
+    pol = PolicyNet(PolicyConfig(grid=16))
+    cfg = EnvConfig(grid=16)
+    p0, _ = run_policy(pol, design, cfg, k=6, seed=0, include_greedy=False, select="reward")
+    p1, _ = run_policy(pol, design, cfg, k=6, seed=1, include_greedy=False, select="reward")
+    assert p0.meta["evaluations"] == 6 and p0.meta["best_from"] == "sample" and p0.meta["greedy_proxy"] is None
+    assert not (np.array_equal(p0.x, p1.x) and np.array_equal(p0.y, p1.y))  # seeds give different samples
+    assert not check_legality(design, p0, check_grid=False)
+    # proxy-only reward: best reward == lowest proxy
+    pp, _ = run_policy(pol, design, cfg, k=6, seed=0, include_greedy=False, select="proxy")
+    assert pp.meta["best_proxy"] == pytest.approx(p0.meta["best_proxy"])
+    with pytest.raises(ValueError):
+        run_policy(pol, design, cfg, k=1, select="nope")

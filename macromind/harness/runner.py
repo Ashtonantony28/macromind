@@ -52,6 +52,9 @@ class Job:
     extra: dict = field(default_factory=dict)
     timeout_s: float | None = None
     rl_ckpt: str | None = None
+    #: report name for this placer variant (e.g. ``rl-v2-proxy`` for ``macromind-rl`` with a fine-tuned checkpoint);
+    #: part of the key and run-dir name only when set
+    tag: str | None = None
     #: reuse this run dir instead of the key-derived one (``resume-dir``; not part of the key)
     run_dir_override: str | None = None
 
@@ -76,6 +79,8 @@ class Job:
             "placer": self.placer, "seed": int(self.seed), "stop_after": self.stop_after,
             "budget": self.budget, "extra": {k: str(v) for k, v in sorted(self.extra.items())},
         }
+        if self.tag:
+            mat["tag"] = self.tag
         if p.kind == "macromind":
             mat["code"] = code_version()
             if p.method == "rl":
@@ -89,7 +94,7 @@ class Job:
     def run_dir(self) -> Path:
         if self.run_dir_override:
             return Path(self.run_dir_override)
-        return harness_dir() / "jobs" / self.dspec.tag / f"{self.placer}-s{self.seed}-{self.stop_after}-{self.key()}"
+        return harness_dir() / "jobs" / self.dspec.tag / f"{self.tag or self.placer}-s{self.seed}-{self.stop_after}-{self.key()}"
 
 
 # ----------------------------------------------------------------------------- base (synth + 2_1)
@@ -282,3 +287,42 @@ def _score_odb(odb: Path, rd: Path, lefs: dict) -> dict:
     except Exception as e:  # noqa: BLE001
         return {"error": f"score failed: {type(e).__name__}: {e}"}
     return s
+
+
+# ----------------------------------------------------------------------------- post-processing (disk is scarce)
+def label_and_prune(rd: Path, *, prune: bool = True) -> str | None:
+    """For a *finished* job (``ppa.json`` present): store GRT gcell congestion statistics of ``5_1_grt.odb`` in
+    ``labels/`` and as ``ppa.json["grt_congestion"]`` (hot_frac = share of gcells at >= 90% utilisation, mean over
+    H/V; top-5% utilisation), then delete the heavy artefacts (ODBs, netlists, guides, objects). Returns a status
+    string or None if there was nothing to do."""
+    import numpy as np
+
+    from ..predict.datagen import extract_gcells, prune_run
+    from ..predict.labels import congestion_summary
+
+    pj = rd / "ppa.json"
+    if not pj.exists():
+        return None
+    rec = json.loads(pj.read_text())
+    odbs = sorted(rd.glob("results/*/*/*/5_1_grt.odb"))
+    did = []
+    if "grt_congestion" not in rec and (odbs or (rd / "labels/gcells.npz").exists()):
+        npz = rd / "labels/gcells.npz"
+        npz.parent.mkdir(exist_ok=True)
+        try:
+            if not npz.exists():
+                extract_gcells(odbs[0], npz)
+            g = dict(np.load(npz))
+            cs = congestion_summary(g)
+            cs["hot_frac"] = 0.5 * (cs["hot_frac_h"] + cs["hot_frac_v"])
+            rec["grt_congestion"] = cs
+            (rd / "labels/congestion.json").write_text(json.dumps(cs, indent=1))
+            pj.write_text(json.dumps(rec, indent=1, default=str))
+            did.append(f"hot_frac={cs['hot_frac']:.4f}")
+        except Exception as e:  # noqa: BLE001
+            did.append(f"label error: {e}")
+            return "; ".join(did)
+    if prune and (any(rd.glob("results/*/*/*/*.odb")) or (rd / "objects").exists()):
+        prune_run(rd)
+        did.append("pruned")
+    return "; ".join(did) or None

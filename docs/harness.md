@@ -119,6 +119,23 @@ Gotchas found while building it:
 - `DESIGN_NICKNAME` (e.g. `bp_fe`) names the results dir, not `DESIGN_NAME`;
   the harness asks make for `RESULTS_DIR`/`LOG_DIR` instead of guessing.
 
+## SG10 additions
+
+- **Designs outside ORFS.** `DesignSpec.config_path()` falls back to an adapter config under
+  `macromind/harness/designs/<platform>/<design>/config.mk` when ORFS has no design of that name.
+  `nangate45/tinygpu_c4` is the tiny-gpu c4 variant: the adapter sets `TG_CONFIG = c4` and includes
+  `designs/tinygpu/config.mk` (unchanged). A `# macromind-digest: designs/tinygpu` line adds that directory to
+  the design digest (cache key). The c4 base was imported from the SG9 run
+  (`python -m macromind.harness import-base --design nangate45/tinygpu_c4 --work-home runs/orfs/tinygpu`).
+- **Variant tags.** `--tag NAME` names a placer variant in run dirs, cache keys and reports, e.g.
+  `--placer rl --rl-ckpt runs/rl-v2/bp_fe_top/pred/policy.pt --tag rl-v2-pred`. Untagged jobs keep their old keys.
+- **Disk.** `python -m macromind.harness label-prune` adds GRT gcell congestion statistics (`grt_congestion`:
+  share of gcells at >= 90% utilisation `hot_frac`, top-5% utilisation, ...) from `5_1_grt.odb` to each finished
+  job's `ppa.json`, then deletes ODBs, netlists, guides and `objects/` (a bp_fe GRT job shrinks from ~330 MB to a
+  few MB). Pruned jobs cannot be resumed; their cached `ppa.json` stays valid.
+- **Placer time.** Reports show the macro placer's own runtime: the MacroMind subprocess (`placer.total_s`: DEF
+  read, clustering, placement) or the whole RTLMP `2_2_floorplan_macro` stage.
+
 ## Tests
 
 `pytest -q` runs the unit tests (config generation, emit/parse round trips via

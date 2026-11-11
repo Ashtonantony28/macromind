@@ -27,6 +27,8 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 HOOK_TCL = Path(__file__).resolve().parent / "orfs_hook.tcl"
 MACROMIND_METHODS = ("random", "grid", "sa", "rl")
+#: adapter configs for designs that live in this repo rather than in ORFS (see docs/harness.md)
+LOCAL_DESIGNS = REPO_ROOT / "macromind/harness/designs"
 PLACERS = ("rtlmp",) + tuple(f"macromind-{m}" for m in MACROMIND_METHODS)
 
 #: harness ``--stop-after`` -> ORFS make target
@@ -67,7 +69,11 @@ class DesignSpec:
         return f"{self.platform}_{self.design}"
 
     def config_path(self, home: Path | None = None) -> Path:
-        return (home or flow_home()) / "designs" / self.platform / self.design / "config.mk"
+        """The stock ORFS design config, or a MacroMind-local adapter config (:data:`LOCAL_DESIGNS`) when ORFS
+        has no design of that name (e.g. ``nangate45/tinygpu_c4`` -> ``designs/tinygpu`` with ``TG_CONFIG=c4``)."""
+        stock = (home or flow_home()) / "designs" / self.platform / self.design / "config.mk"
+        local = LOCAL_DESIGNS / self.platform / self.design / "config.mk"
+        return local if not stock.exists() and local.exists() else stock
 
 
 @dataclass(frozen=True)
@@ -201,8 +207,14 @@ def code_version() -> str:
 
 def design_digest(design: DesignSpec) -> str:
     """Hash of the stock design directory's config + constraint files (not the RTL tree)."""
-    d = design.config_path().parent
-    files = [p for p in d.iterdir() if p.is_file() and p.suffix in (".mk", ".sdc", ".tcl", ".v", ".lef", ".lib", ".cfg")]
+    cfg = design.config_path()
+    dirs = [cfg.parent]
+    # adapter configs name the repo directories they wrap: "# macromind-digest: designs/tinygpu"
+    for line in cfg.read_text().splitlines() if cfg.exists() else []:
+        if line.startswith("# macromind-digest:"):
+            dirs += [REPO_ROOT / x for x in line.split(":", 1)[1].split()]
+    exts = (".mk", ".sdc", ".tcl", ".v", ".lef", ".lib", ".cfg", ".f")
+    files = [p for d in dirs for p in d.iterdir() if p.is_file() and p.suffix in exts]
     return file_digest(files)[:16]
 
 

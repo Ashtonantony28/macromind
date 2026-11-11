@@ -251,3 +251,28 @@ def test_report_dedupes_superseded_runs():
     other = {**old, "job": {**old["job"], "seed": 1}}
     out = report.dedupe([old, new, other])
     assert len(out) == 2 and new in out
+
+
+# ----------------------------------------------------------------------------- SG10 additions
+def test_job_tag_key_and_report_label(monkeypatch, tmp_path):
+    monkeypatch.setenv("MACROMIND_HARNESS_DIR", str(tmp_path))
+    plain = Job("nangate45/gcd", "rl", 0, stop_after="grt")
+    tagged = Job("nangate45/gcd", "rl", 0, stop_after="grt", tag="rl-v2-proxy")
+    assert "tag" not in plain.key_material() and tagged.key_material()["tag"] == "rl-v2-proxy"
+    assert plain.key() != tagged.key() and tagged.run_dir().name.startswith("rl-v2-proxy-s0-grt-")
+
+    def rec(tag, wl):
+        return {"job": {"design": "nangate45/x", "placer": "macromind-rl", "seed": 0, "stop_after": "grt", "tag": tag},
+                "status": "ok", "ppa": {"grt_wl_um": wl}, "placer": {"total_s": 3.0}}
+
+    md = report.build_report([rec(None, 1e6), rec("rl-v2-proxy", 2e6)])  # same seed, different variants: both kept
+    assert "| macromind-rl | 1/1 |" in md and "| rl-v2-proxy | 1/1 |" in md
+
+
+def test_local_design_adapter():
+    from macromind.flow.orfs import LOCAL_DESIGNS, design_digest
+
+    d = DesignSpec.parse("nangate45/tinygpu_c4")
+    assert d.config_path() == LOCAL_DESIGNS / "nangate45/tinygpu_c4/config.mk"
+    assert "TG_CONFIG = c4" in d.config_path().read_text()
+    assert len(design_digest(d)) == 16  # hashes the adapter and designs/tinygpu
