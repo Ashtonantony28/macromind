@@ -7,3 +7,4 @@ tools/
 *.odb
 designs/tinygpu/upstream/
 designs/spikemesh/upstream/
+designs/spikemesh/sim/sim_build/
