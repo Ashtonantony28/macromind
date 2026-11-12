@@ -127,6 +127,8 @@ Gotchas found while building it:
   `designs/tinygpu/config.mk` (unchanged). A `# macromind-digest: designs/tinygpu` line adds that directory to
   the design digest (cache key). The c4 base was imported from the SG9 run
   (`python -m macromind.harness import-base --design nangate45/tinygpu_c4 --work-home runs/orfs/tinygpu`).
+  `sky130hd/spikemesh_n128` is the SpikeMesh neurocore with 10 OpenRAM macros, same pattern
+  (`designs/spikemesh`, see [spikemesh-macro-variant.md](spikemesh-macro-variant.md)).
 - **Variant tags.** `--tag NAME` names a placer variant in run dirs, cache keys and reports, e.g.
   `--placer rl --rl-ckpt runs/rl-v2/bp_fe_top/pred/policy.pt --tag rl-v2-pred`. Untagged jobs keep their old keys.
 - **Disk.** `python -m macromind.harness label-prune` adds GRT gcell congestion statistics (`grt_congestion`:
