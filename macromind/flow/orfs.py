@@ -214,7 +214,8 @@ def design_digest(design: DesignSpec) -> str:
         if line.startswith("# macromind-digest:"):
             dirs += [REPO_ROOT / x for x in line.split(":", 1)[1].split()]
     exts = (".mk", ".sdc", ".tcl", ".v", ".lef", ".lib", ".cfg", ".f")
-    files = [p for d in dirs for p in d.iterdir() if p.is_file() and p.suffix in exts]
+    # a design dir can be absent (ORFS not installed, e.g. CI): it then adds nothing to the digest
+    files = [p for d in dirs if d.is_dir() for p in d.iterdir() if p.is_file() and p.suffix in exts]
     return file_digest(files)[:16]
 
 
